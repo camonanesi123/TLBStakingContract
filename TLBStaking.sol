@@ -704,7 +704,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         return totalSupply() - totalBurnt;
     }
 
-    //计算子节点
+    //计算用户下面20层子孙节点
     function _branchMembers(address account,uint count) internal view returns(address[20] memory) {
         address[20] memory _children;
         Node storage node = _nodes[account];
@@ -727,18 +727,19 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         //从后往前计算（检查用户账本，每天本金）
         for(uint i=len; i>0; i++) {
             FundLog storage _log1 = node.logs[i-1];
-            uint _from = _log1.time;//前一天的记账时间
+            uint _from = _log1.time;//前一次的记账时间
             uint _to = 0; 
-            if (i==len) {//如果是账本最后一天记录，则设置to为当前时间
+            if (i==len) {//如果是账本最后一次记录，则设置to为当前时间
                 _to = now;
             } else {
-                _to = node.logs[i].time;//后一天的记账时间
+                _to = node.logs[i].time;//后一次的记账时间
             }
             if (from>_to || to<_from) continue;
             if (_from < from) _from = from;
             if (_to > to) _to = to;
             
             uint _diff = _to - _from;
+            //一天时间为86400秒
             if (_diff>864000) {
                 result = SafeMath.add(result, _log1.balance * _tiers[_log1.tier-1].staticRewards * _diff / 86400000);
             }
@@ -787,7 +788,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
     }
 
 
-    //计算股东收益 或者 位置奖金 或者 保险奖金
+    //计算股东收益 或者 位置奖金 或者 保险奖金（逻辑正确）
     function rewardOf(address sender) public view returns(uint) {
         Node storage node = _nodes[sender];
         uint rewards = node.rewards;
@@ -796,31 +797,34 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         uint _fromIndex = 0;
         uint len = logs.length;
         if (len>0) {
-            //从后往前tranverse用户账本
+            //从后往前tranverse用户账本，找到上一次提现的操作时间。因为提现会改变奖金
             for(uint i=len-1; i>0; i--) {
                 FundLog storage _log1 = logs[i-1];
+                //如果有提现发生
                 if (_log1.change<0) {
-                    _from = _log1.time;
-                    _fromIndex = i;
+                    _from = _log1.time;//记录提现时间
+                    _fromIndex = i;//记录提现在会计账本上的编号
                     break;
                 }
             }
         }
-            
+
+        //对于 有奖金的位置点，查找奖金账本中的记录。    
         if (node.layer>998 && node.layer<1002) {
             for(uint i=0;i<_luckyLogs.length;i++) {
                 FundLog storage _log1 = _luckyLogs[i];
-                if (_log1.time>_from) {
+                if (_log1.time>_from) {//如果上一次提现时间，在奖金统计时间中。 则将奖励 计算给用户
                     rewards += _log1.balance / 2998;
                 }
             }
         }
+        //对于 保险的用户 查看保险账本
         for(uint i=0;i<insurLogs.length;i++) {
             Insurance storage log = insurLogs[i];
-            if (log.time>_from) {
-                for(uint k=_fromIndex; i<len; i++) {
+            if (log.time>_from) {//保险发生在该用户提现以后
+                for(uint k=_fromIndex; i<len; i++) {//判断该用户在保险发生以36小时内是否入金
                     FundLog storage _log1 = logs[i-1];
-                    if (_log1.change>0 && _log1.time<log.time && _log1.time>log.time-7200) {
+                    if (_log1.change>0 && _log1.time<log.time && _log1.time>log.time-7200) {//有入金，则添加奖励
                         rewards += log.amount / log.count;        
                         break;
                     }
@@ -838,19 +842,19 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
     function dynamicRewardOf(address sender) public view returns(uint) {
         if (firstAddress==address(0)) return 0;
         uint dynamicRewards = 0;
-        if (sender==_zhang.account) {
+        if (sender==_zhang.account) {//张总的动态收益就是张总的rewards
             return _zhang.rewards;
-        } else if (sender==_lee.account) {
+        } else if (sender==_lee.account) {//李总的动态收益就是李总的rewards
             return _lee.rewards;
-        } else if (sender==_admin.account) {
+        } else if (sender==_admin.account) {//管理员的动态收益，按最大账户处理
             uint len = _admin.logs.length;
-            // calculate PNode static rewards;
-            for(uint i=(len==0?len-1:1); i>0; i--) {
+            // calculate PNode static rewards; 计算共生节点静态收益带给管理员的动态收益
+            for(uint i=(len==0?len-1:1); i>0; i--) { //计算管理员从上一次提现到当前时间
                 uint _from = 0;
                 uint _to = 0;
-                uint _sprigs = 0;
+                uint _sprigs = 0;//动态矩阵下标
                 int _change = 0;
-                if (len==0) {
+                if (len==0) {//管理员从来没有提现过
                     _from = 0;
                     _to = now;
                     _sprigs = _tiers[3].sprigs;
@@ -861,14 +865,14 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
                     _to = i==len ? now : _admin.logs[i].time;
                     _sprigs = _tiers[_log1.tier-1].sprigs;
                     _change = _log1.change;
-                    
                 }
                 
+                //检查管理员每个记账时间段内，共生节点的静态收益
                 uint childStatic = _staticRewardOf(firstAddress, _from, _to);
-                dynamicRewards += childStatic * sprigs[0][2] / 1000;
+                dynamicRewards += childStatic * sprigs[0][2] / 1000; //吃20%
                 if (_change<0) break;
             }
-            Node storage node = _nodes[firstAddress];
+            Node storage node = _nodes[firstAddress];//共生节点
             for (uint b=0; b<node.branches.length; b++) {
                 dynamicRewards += _dynamicRewardOf(node.branches[b].child, sender, 4, 1);
             }
@@ -889,6 +893,8 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         
         return dynamicRewards;
     }
+
+    //动态收益计算方式
     function _dynamicRewardOf(address firstChild, address sender, uint8 tier,uint tierStart) public view returns(uint) {
         address[20] memory _children = _branchMembers(firstChild,20-tierStart);
         uint dynamicRewards = 0;
@@ -900,7 +906,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
             logs = _nodes[sender].logs;
         }
         uint len = logs.length;
-        for(uint i=(len==0?len-1:1); i>0; i--) {
+        for(uint i=(len==0?len-1:1); i>0; i--) {//从后往前查看账本记录
             uint _from = 0;
             uint _to = 0;
             uint _sprigs = 0;
@@ -983,16 +989,20 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         return (totalWithdrawal,limit,children,totalScore,totalDeposit);
         
     }
+    //计算 可提现金额 正确
     function noderewards(address sender) public view returns(uint) {
         return _withdrawable(sender, now);
     }
     
+    //计算 矿机价格 正确
     function minerPrice(uint8 tier) public view returns(uint) {
         if (tier>0 && tier<4) {
             return _minerTiers[tier][0] + _minerTiers[tier][0] * currentLayer / 1000; 
         }
         return 0;
     }
+
+    //计算
     function minerTierInfo(uint amountUsdt) internal view returns(uint8,uint) {
         for(uint i=0; i<_minerTiers.length; i++) {
             uint minerPrice = _minerTiers[i][0];
@@ -1004,17 +1014,21 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         }
         return (0, 0);
     }
+    //计算 矿工数量 正确
     function minerCount() public view returns(uint) {
         return minePool.minerCount;
     }
+    //计算 总算力 正确
     function totalMinePower() public view returns(uint) {
         return minePool.totalPower;
     }
     
+    //计算 推广矿工数量
     function referedMinersOf(address account) public view returns(uint) {
         return _referedMiners[account].length;
     }
     
+    //计算 推广矿工的总算力
     function totalReferedMinerPowerOf(address account) public view returns(uint) {
         uint _total = 0;
         for (uint i=0; i<_referedMiners[account].length; i++) {
@@ -1024,6 +1038,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         return _total;
     }
     
+    //计算 待领取的TLB 奖励 正确
     function pendingTLB(address account) public view returns(uint) {
         Miner storage miner= _miners[account];
         if (miner.lastBlock!=0) {
@@ -1038,6 +1053,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         return 0;
     }
     
+    //触发领取奖励动作 正确
     function withdrawTLBFromPool() public {
         address sender = _msgSender();
         require(sender!=address(0), "# Invalid_sender");
@@ -1045,11 +1061,14 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         uint withdrawal = pendingTLB(sender);
         require(withdrawal>0, "# Invalid_sender");
         require(minePool.minedTotal + withdrawal<= totalMineable, "# overflow_total_mine");
+        //重新设置一下 矿工区块时间
         miner.lastBlock = miner.mineType==MineType.Flexible ? 0 : block.number;
+        //统计总共挖出来的 TLB数量
         minePool.minedTotal += withdrawal;
         _mint(sender, withdrawal);
     }
     
+    //添加矿工
     function _addMiner(address sender, address referalLink, uint amountUsdt, MineType mineType, uint8 tier, uint referalRewards, uint time) internal {
         Miner storage miner= _miners[sender];
         
@@ -1078,7 +1097,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         _lee.rewards += amountUsdt * 15 / 1000; // 1.5%
     }
      
-    
+    //入金方法 外部调用 正确
     function deposit(address referalLink, uint amount) public {
         address sender = _msgSender();
         require(sender!=address(0), "# Invalid_sender");
@@ -1142,6 +1161,8 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         }
         _processSellOrder();
     }
+
+    //矿工信息， 返回 算力，挖矿方式，是否激活
     function minerInfo(address miner) public view returns(uint,MineType,bool) {
         bool status = false;
         Miner storage miner= _miners[miner];
@@ -1154,6 +1175,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         }
         return (miner.tier,miner.mineType,status);
     }
+    //开始挖矿，每次提现后必须重新触发 （需要添加判断 没有购买矿机的人 不能触发该操作）
     function startMine() public {
         address sender = _msgSender();
         require(sender!=address(0), "# Invalid_sender");
@@ -1162,6 +1184,8 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         require(miner.lastBlock==0, "# Already_started");
         miner.lastBlock = block.number;
     }
+
+    //设置挖矿 方式 （有待讨论）
     function setMineType(MineType mineType) public {
         address sender = _msgSender();
         require(sender!=address(0), "# Invalid_sender");
@@ -1169,7 +1193,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         require(miner.referer!=address(0), "# Invalid_miner");
         miner.mineType = mineType;
     }
-    
+    //购买矿机（如果没有推广连接，那么推广连接地址 设置成管理员地址）
     function buyMiner(address referalLink, uint amountUsdt, MineType mineType) public returns(uint) {
         address sender = _msgSender();
         require(sender!=address(0), "# Invalid_sender");
@@ -1180,6 +1204,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         TransferHelper.safeTransferFrom(USDTToken, sender, referalLink, referalRewards * 90 / 100);
         _addMiner(sender, referalLink, amountUsdt, mineType, tier, referalRewards, now);
     }
+    //查看矿池，总算力，和总人数 正确
     function minerList() public view returns(uint, MinerInfo[] memory) {
         uint count = _minerlist.length;
         MinerInfo[] memory miners = new MinerInfo[](count);
@@ -1190,6 +1215,8 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         return (minePool.totalPower,miners);
     }
     
+
+    //购买TLB 方法正确
     function buy(uint amountUsdt) public {
         address sender = _msgSender();
         require(sender!=address(0), "# Invalid_sender");
@@ -1243,6 +1270,8 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         }
         _processSellOrder();
     }
+
+    //撤销买单，当 卖队列无法满足 买队列时 正确
     function cancelBuyOrder() public {
         address sender = _msgSender();
         require(sender!=address(0), "# Invalid_sender");
@@ -1269,6 +1298,8 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         }
         _processSellOrder();
     }
+
+    //卖出 TLB 方法正确
     function sell(uint amountTps) public {
         address sender = _msgSender();
         require(sender!=address(0), "# Invalid_sender");
@@ -1324,6 +1355,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         }
         _processSellOrder();
     }
+    //撤销卖单
     function cancelSellOrder() public {
         address sender = _msgSender();
         require(sender!=address(0), "# Invalid_sender");
@@ -1350,6 +1382,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         }
         _processSellOrder();
     }
+    //查询订单历史记录
     function orderHistory() public view returns(OrderTx[] memory) {
         uint count = _txBook.length>10 ? 10 : _txBook.length;
         OrderTx[] memory logs = new OrderTx[](count);
@@ -1362,6 +1395,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         }
         return logs;
     }
+    //触发回购操作
     function _processSellOrder() internal {
         uint count = 0;
         uint sumTps = 0;
