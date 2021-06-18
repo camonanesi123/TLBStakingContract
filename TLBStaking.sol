@@ -97,7 +97,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
     struct Miner {
         MineType mineType;
         address referer;//推荐人
-        uint tier;//算力
+        uint git;//算力
         uint lastBlock;//上一次激活挖矿时间
         uint rewards;//可以提现的TLB数量
     }
@@ -199,13 +199,13 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
 
     //矿工初始价格，和推广收益表
     uint[][] _minerTiers = [
-        [15000 * 10 ** uint(USDTPrecision), 100, 100, 30],
+        [15000 * 10 ** uint(USDTPrecision), 100, 100, 30], //15000U,100T,10%,30%
         [7500 * 10 ** uint(USDTPrecision), 50, 50, 20], 
         [3500 * 10 ** uint(USDTPrecision), 25, 25, 10], 
         [100 * 10 ** uint(USDTPrecision), 5, 10, 5]
     ];
 
-    
+    //矿工列表
     address[] _minerlist;
     mapping(address=>Miner) _miners;
     mapping(address=>address[]) _referedMiners;
@@ -994,7 +994,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         return _withdrawable(sender, now);
     }
     
-    //计算 矿机价格 正确
+    //计算 矿机价格每增加一层 认购价格 矿机认购价格在原基础上 增加0.1% 正确
     function minerPrice(uint8 tier) public view returns(uint) {
         if (tier>0 && tier<4) {
             return _minerTiers[tier][0] + _minerTiers[tier][0] * currentLayer / 1000; 
@@ -1002,13 +1002,15 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         return 0;
     }
 
-    //计算
+    //根据购买金额，返回，算力和推广收益 正确
     function minerTierInfo(uint amountUsdt) internal view returns(uint8,uint) {
         for(uint i=0; i<_minerTiers.length; i++) {
             uint minerPrice = _minerTiers[i][0];
             uint price = minerPrice + minerPrice * currentLayer / 1000;
             if (price==amountUsdt) {
+                //大于100层，推广收益变化
                 if (currentLayer>100) return (uint8(_minerTiers[i][1]),_minerTiers[i][3]);
+                //100层以内，推广收益维持原状
                 return (uint8(_minerTiers[i][1]),_minerTiers[i][2]);
             }
         }
@@ -1091,6 +1093,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         }
         minePool.totalPower += tier;
         
+        //正确  张总，李总，管理员，分红
         redeemAmount += referalRewards * 10 / 100;
         _admin.rewards += amountUsdt * 20 / 1000; // 2%
         _zhang.rewards += amountUsdt * 15 / 1000; // 1.5%
