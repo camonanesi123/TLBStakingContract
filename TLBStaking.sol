@@ -27,19 +27,21 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
     event BuyOrderCancelled(address guest, uint amount);
     event SellOrderAdded(address guest, uint amount);
     event SellOrderCancelled(address guest, uint amount);
-
+    //会员类型
     enum NodeType{ PNode, Shareholder, Guest }
+    //矿工种类 灵活挖矿 or 固定挖矿
     enum MineType{ Flexible, Fixed }
     
-
+    //会员等级
     struct Tier {
         uint8 index;
-        uint min;
-        uint8 staticRewards;
-        uint8 sprigs;
-        uint limit;
+        uint min; //最小存款金额
+        uint8 staticRewards;//静态收益
+        uint8 sprigs;//动态收益矩阵
+        uint limit;//综合收益
     }
 
+    //存款记录表
     struct FundLog {
         uint time;
         uint balance;
@@ -47,12 +49,13 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         uint tier;
     }
     
+    //分支
     struct Branch {
         address child;
         uint time; // After filling 3 referees, set it to block time
     }
 
-    
+    //管理员
     struct Admin {
         address account;
         uint rewards;
@@ -60,73 +63,86 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         uint totalRewards;
     }
     
+    //节点数据结构
     struct Node {
-        uint32 position; // location in prism
-        uint16 layer; // location in prism
-        address referer;
-        NodeType role;
-        uint8 tier;
-        uint totalDeposit;
-        uint totalWithdrawal;
-        bool isOverflowed; // calculate statically + dynamically(for 1999, 2000, 2001 layer)
-        uint lastAmount;
-        uint lastTime;
-        uint limit;
-        uint balance;
-        uint rewards; // for shareholder 4% or position rewards, calculate statically and dynamically(999~1001) 
+        uint32 position; // location in prism  数组中的位置
+        uint16 layer; // location in prism   棱形中的层数
+        address referer;//推荐人
+        NodeType role;//角色
+        uint8 tier;//会员等级
+        uint totalDeposit;//总存款
+        uint totalWithdrawal;//总提现金额
+        bool isOverflowed; // calculate statically + dynamically(for 1999, 2000, 2001 layer) 是否爆仓，爆仓以后可以继续看到收益增长，但无法提现，必须下一次充值以后提现
+        uint lastAmount;//上一次存款金额
+        uint lastTime;//上次 存款时间
+        uint limit;//综合收益
+        uint balance;//剩余本金
+        uint rewards; // for shareholder 4% or position rewards, calculate statically and dynamically(999~1001) 股东收益 或者 位置奖金 
         // uint staticRewards; // calculate dynamically
         // uint dynamicRewards;; // calculate dynamically
+        //父节点
         address parent;
         
-        // for MLM Tree
+        // for MLM Tree 直接推荐了多少个人
         uint16 referalCount;
+        //分支数，子节点个数
         Branch[] branches; // first child address (may be not his referee) in every branch
         
-        // will save all history to calculate dynamicRewards dynamically
+        // will save all history to calculate dynamicRewards dynamically  用户出入金记录
         FundLog[] logs;
         
     }
     
+    //矿工
     struct Miner {
         MineType mineType;
-        address referer;
-        uint tier;
-        uint lastBlock;
-        uint rewards;
+        address referer;//推荐人
+        uint tier;//算力
+        uint lastBlock;//上一次激活挖矿时间
+        uint rewards;//可以提现的TLB数量
     }
+    //矿工信息
     struct MinerInfo {
-        address account;
-        uint tier;
+        address account; //地址
+        uint tier;//算力
     }
+    //子节点信息
     struct ChildInfo {
         address account;
         uint deposit;
     }
+    //矿池统计
     struct MinePool {
-        uint totalPower;
-        uint minerCount;
-        uint minedTotal;
+        uint totalPower; //总算力
+        uint minerCount; //矿工个数
+        uint minedTotal; //已经挖出多少矿
     }
-
+    //订单表
     struct Order {
         uint time;
         address account;
         uint initial;
         uint balance;
     }
+    //交易记录表
     struct OrderTx {
         uint txid;
         uint8 txtype;
         uint quantity;
         uint time;
     }
-    
+    //管理员
     Admin _admin;
+    //张总
     Admin _zhang;
+    //李总
     Admin _lee;
 
+    //累计销毁
     uint public totalBurnt = 0;
+    //火币链上usdt代币地址
     address USDTToken = 0xE5f2A565Ee0Aa9836B4c80a07C8b32aAd7978e22;
+    //代币精度
     uint8 USDTPrecision = 2;
     uint _usdt = uint(10) ** USDTPrecision;
 
@@ -137,19 +153,18 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
     // address USDTToken = 0xa71EdC38d189767582C38A3145b5873052c3e47a;
     // uint8 USDTPrecision = 18;
         
-    uint _tpsIncrement = _usdt / 100;
-    uint public price = _usdt / 10;
-    uint32 public maxUsers = 500500+499500;
-    uint32 public totalUsers = 0;
-    uint16 public currentLayer = 0;
-    uint16 _positionInLayer = 0;
-    bool _insuranceStatus = false;
+    uint _tpsIncrement = _usdt / 100; //TLB涨幅，每一层
+    uint public price = _usdt / 10;// TLB 初始价格
+    uint32 public maxUsers = 500500+499500; //最大用户数
+    uint32 public totalUsers = 0;//目前用户数
+    uint16 public currentLayer = 0;//当前层级
+    uint16 _positionInLayer = 0;//当前位置在 某一层中的位置
+    bool _insuranceStatus = false; //保险触发条件
     
-    uint public totalMineable = 28032000;
+    uint public totalMineable = 28032000; //总计可以挖出来的矿
+    uint public totalDeposit = 0;//系统总计存款
     
-    uint public totalDeposit = 0;
-    
-    
+    //保险状态
     struct Insurance {
         uint time;
         uint amount;
@@ -157,17 +172,19 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
     }
     Insurance[] insurLogs;
     
+    //动态收益列表
     uint8[][] sprigs = [
-        [1, 1, 200],
-        [2, 2, 150],
-        [3, 7, 100],
-        [8, 15, 50],
-        [16, 20, 20]
+        [1, 1, 200], //第1层 吃 静态收益的20%
+        [2, 2, 150],//第2层 吃 静态收益的15%
+        [3, 7, 100],//第3-7层 吃 静态收益的10%
+        [8, 15, 50],//第8-15层 吃 静态收益的5%
+        [16, 20, 20]//第15-20层 吃 静态收益的2%
     ];
     
+    //第一个地址
     address public firstAddress; // by admin
     
-    mapping(uint32 => address) private _prism;
+    mapping(uint32 => address) private _prism; 
     mapping(address => Node) private _nodes;
     
     Tier[] _tiers;
@@ -176,10 +193,11 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
     uint public redeemAmount; // 1.5% redeem
     uint _controlAmount; // 1.5% redeem
     
-    FundLog[] _inLogs; // all deposit logs;
+    FundLog[] _inLogs; // all deposit logs; 所有入金账本
     FundLog[] _totalLogs;
-    FundLog[] _luckyLogs;  // for 999 ~ 1001 layers;
+    FundLog[] _luckyLogs;  // for 999 ~ 1001 layers; 位置奖金账本
 
+    //矿工初始价格，和推广收益表
     uint[][] _minerTiers = [
         [15000 * 10 ** uint(USDTPrecision), 100, 100, 30],
         [7500 * 10 ** uint(USDTPrecision), 50, 50, 20], 
@@ -199,40 +217,43 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
     
     
     
-    
+    //构造方法， 合约创建时候执行
     constructor () public {
         uint _initialSupply  = maxSupply() * 20 / 100;
         _mint(msg.sender, _initialSupply);
         
+        //初始化会员等级
         _tiers.push(Tier({
             index: 1,
             min: 200,
             staticRewards: 16,  // 0.1%
             sprigs: 2,
-            limit: 2200        // 0.1%
+            limit: 2200        // 0.1% 综合收益倍数
         }));
         _tiers.push(Tier({
             index: 2,
-            staticRewards: 12,
+            staticRewards: 14,
             min: 1001,
             sprigs: 3,
             limit: 2100        // 0.1%
         }));
         _tiers.push(Tier({
             index: 3,
-            staticRewards: 10,
+            staticRewards: 12,
             min: 2001,
             sprigs: 4,
             limit: 2000        // 0.1%
         }));
         _tiers.push(Tier({
             index: 4,
-            staticRewards: 8,
+            staticRewards: 10,
             min: 5001,
             sprigs: 5,
             limit: 1900        // 0.1%
         }));
     }
+
+    //设置管理员，张总，李总 钱包地址。需要设置管理员地址，张总地址，李总地址。注意（张总，李总）作为股东身份参与，请另外使用地址
     function setAdmin(address admin,address lee,address zhang,address redeem) public {
         _admin.account = admin;
         _lee.account = lee;
@@ -240,20 +261,20 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         redeemAddress = redeem;
     }
     /**
-     * @dev Returns Admin address.
+     * @dev Returns Admin address. 返回管理员地址
      */
     function admin() public view returns(address) {
         return _admin.account;
     }
     
     /**
-     * @dev Returns zhang address.
+     * @dev Returns zhang address. 返回张总地址
      */
     function zhang() public view returns(address) {
         return _zhang.account;
     }
     /**
-     * @dev Returns Admin address.
+     * @dev Returns Admin address. 返回李总地址
      */
     function lee() public view returns(address) {
         return _lee.account;
@@ -261,7 +282,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
     
     /**
      * internal
-     * @dev Returns tier index corresponding to deposit amount.
+     * @dev Returns tier index corresponding to deposit amount. 根据入金数额获取当前会员等级
      */
     function getTier(uint amount) internal view returns(uint) {
         uint senderTier = 0;
@@ -278,7 +299,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
     
     /**
      * internal
-     * @dev indicates the referal link is valid or not.
+     * @dev indicates the referal link is valid or not. 判断推荐连接是否正确
      */
     function isValidReferer(address sender, address referer) internal view returns(bool) {
         if (_nodes[referer].lastAmount == 0) return false;
@@ -288,20 +309,20 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
     
     /**
      * internal
-     * @dev indicates the node is exist or not.
+     * @dev indicates the node is exist or not. 判断用户是否存在
      */
     function existNode(address sender) internal view returns(bool) {
         return _nodes[sender].lastAmount > 0;
     }
     
     /**
-     * @dev Return required number of TPS to member.
+     * @dev Return required number of TPS to member. 计算入金时候需要的TLB数量
      */
     function _neededTPSForDeposit(uint amount) public view returns(uint256) {
         return amount /  10 / price; // 10% TPS of amount
     }
     /**
-     * @dev Return required number of TPS to member.
+     * @dev Return required number of TPS to member. 计算出金的时候TLB数量，前1000层 5个，1001层开始2个
      */
     function _neededTPSForWithdraw(address account) public view returns(uint256) {
         if (account==_zhang.account || account==_lee.account || account==_admin.account) return 0;
@@ -311,16 +332,22 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
      * internal
      * @dev Logically add users to prism.
      * At this time, if the current layer is filled by the user, the number of layers and the price of TPS tokens will change.
+     * 新增用户时候，把用户加入到棱形位置中 返回总用户数
      */
     function addUserToPrism() internal returns(uint32) {
+        //当前层 可以允许的最大用户数
         uint32 maxUsersInLayer = currentLayer < 1001 ? currentLayer : 2000 - currentLayer;
+        //当前层会员填满，需要新加一层，TLB涨价0.01
         if (maxUsersInLayer == _positionInLayer) {
             currentLayer++;
             price = SafeMath.add(price,_tpsIncrement);
             _positionInLayer = 1;
-        } else {
+        }
+        //不需要新增层
+         else {
             _positionInLayer++;
         }
+        //总用户增加1
         totalUsers++;
         return totalUsers;
     }
@@ -328,7 +355,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
     
     /**
      * internal
-     * @dev returns last node in branch.
+     * @dev returns last node in branch. 返回分支上的最长路径节点 递归 recursive
      */
     function getLastInBranch(address parent) internal returns(address){
         Node storage parentNode = _nodes[parent];
@@ -341,7 +368,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
     
     /**
      * internal
-     * @dev returns shareholder of linked chain of sender.
+     * @dev returns shareholder of linked chain of sender. 向上查找股东节点
      */
     function getShareholderInBranch(address parent) internal returns(address){
         Node storage parentNode = _nodes[parent];
@@ -354,26 +381,33 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
     
     /**
      * internal
-     * @dev Add or update a node when a user is deposited into the pool.
+     * @dev Add or update a node when a user is deposited into the pool. 当用户存钱的时候，更新树形结构
      */
     function updateNodeInDeposit(address sender,address referalLink, uint amount, uint time) internal {
         Node storage node = _nodes[sender];
         Node storage refererNode = _nodes[referalLink];
+        //新用户第一次入金，改变树形结构
         if (!existNode(sender)) {
             uint32 position = addUserToPrism();
             address parent;
+            //共生节点
             if (totalUsers==1) {
                 node.role = NodeType.PNode;
                 firstAddress = sender;
                 parent = referalLink;
-            } else if (currentLayer<5) {
+            } 
+            //股东节点
+            else if (currentLayer<5) {
                 parent = referalLink;
                 node.role = NodeType.Shareholder;
                 _nodes[parent].branches.push(Branch(sender,time));
-            } else {
+            } 
+            //其他用户
+            else {
                 node.role = NodeType.Guest;
                 uint16 countBranch = refererNode.referalCount / 3;
                 uint16 remainInBranch = refererNode.referalCount % 3;
+                //如果之前的路径上 推荐满了3个用户，则新开分支
                 if (remainInBranch==0) {
                     parent = referalLink;
                     if (countBranch>0) {
@@ -381,13 +415,12 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
                     }
                     _nodes[parent].branches.push(Branch(sender,0));
                 } else {
+                    //根据推荐人的地址 查找当前最长路径
                     parent = getLastInBranch(referalLink);
                 }
             }
-            
+            //推荐人的推荐数量+1
             refererNode.referalCount++;
-            
-            
             node.referer = referalLink;
             node.position = position;
             node.layer = currentLayer;
@@ -402,50 +435,63 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
             if (position > 502503) { // save prism position from 1002 layer
                 _prism[position] = sender;
             }
-        } else {
+        } 
+        //老用户入金，不改变结构，直接改变本金
+        else {
             node.balance += amount;
         }
         node.totalDeposit += amount;
         totalDeposit += amount;
+        //重新计算会员等级
         uint8 tier = (uint8)(getTier(node.balance));
+        //根据新的会员等级，计算综合收益
         node.limit = node.balance * _tiers[tier-1].limit / 1000;
+        //更新会员等级
         node.tier = tier;
+        //更新爆仓状态 (这里可能需要修改，爆仓状态接触后，需要把会员的动态+静态 部分 设计为0， 股东奖励部分 不清零)
         if (node.isOverflowed) node.isOverflowed=false;
-        redeemAmount += amount * 18 / 1000; // 1.5%
-        _controlAmount += amount * 32 / 1000; // 1.5%
-        _admin.rewards += amount * 20 / 1000; // 2%
-        _zhang.rewards += amount * 15 / 1000; // 1.5%
-        _lee.rewards += amount * 15 / 1000; // 1.5%
+        redeemAmount += amount * 18 / 1000; // 1.5% 回购资金
+        _controlAmount += amount * 32 / 1000; // 1.5% 护盘资金
+        _admin.rewards += amount * 20 / 1000; // 2% 管理员奖金
+        _zhang.rewards += amount * 15 / 1000; // 1.5% 张总奖金
+        _lee.rewards += amount * 15 / 1000; // 1.5% 李总奖金
         
         if (node.role == NodeType.Guest) {
             Node storage shareholderNode;
             if (refererNode.role==NodeType.Shareholder) {
                 shareholderNode = refererNode;
             } else {
+                //查找该用户的股东
                 address shareholder = getShareholderInBranch(referalLink);
                 shareholderNode = _nodes[shareholder];
             }
-            shareholderNode.rewards += amount * 40 / 1000; // 4%;
+            shareholderNode.rewards += amount * 40 / 1000; // 4%; 股东奖金
         }
-            
+        //更新最后一次存款金额    
         node.lastAmount = amount;
+        //更新最后一次存款时间
         node.lastTime = time;
+        //用户账本长度
         uint lenLogs = node.logs.length;
         if (lenLogs==0) {
             node.logs.push(FundLog({
-                time: time,
-                tier: node.tier,
-                balance: node.balance,
-                change: (int)(amount)
+                time: time, //更新时间
+                tier: node.tier,//用户等级
+                balance: node.balance,//剩余本金
+                change: (int)(amount)//本次入金数额
             }));
         } else {
+            //获取上一次账本记录
             FundLog storage plog = node.logs[lenLogs-1];
+            //如果上一次记账记录 和 本次操作时间 没有间隔1天，则修改当天记账记录
             if (now - plog.time < 86400 && plog.change>0) {
-                plog.balance += amount;
-                plog.tier += node.tier;
+                plog.balance += amount; //更新会员剩余本金
+                plog.tier += node.tier; //更新会员等级（这里为什么使用+号?)
                 plog.change += (int)(amount);
                 plog.time = now;
-            } else {
+            } 
+            //如果上次记账，距现在超过1天，那么新增加一个记账记录
+            else {
                 node.logs.push(FundLog({
                     time: time,
                     tier: node.tier,
@@ -456,8 +502,9 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         }
         
         // Versicherung Auslösemechanismus Gesamtbetrag alle 36 Stunden.
+        //保险池 触发部分
         uint len = _totalLogs.length;
-        uint roundedtime = now - (now % 129600);
+        uint roundedtime = now - (now % 129600);//36小时 3600*36 为了方便 整除 
         if (len==0) {
             _totalLogs.push(FundLog({
                 time:roundedtime,
@@ -466,28 +513,36 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
                 tier:0
             }));
         } else {
+            //把当前入金 加到 上一次入金的帐目中
             uint balance = SafeMath.add(_totalLogs[len-1].balance,amount);
+            //如果当前入金时间 刚好能整除 roundedtime 不触发保险
             if (_totalLogs[len-1].time==roundedtime) {
                 _totalLogs[len-1].balance = balance;
-            } else {
+            } 
+            //触发保险算法
+            else {
                 // check insurance 
                 uint increament = (_totalLogs[len-1].balance - _totalLogs[len-2].balance) * 1000 / _totalLogs[len-1].balance; 
+                //计算增加比值 当前业绩相对于36小时之前的增加比例不足2%
                 if (increament<20) {
                     uint logtime = _totalLogs[len-1].time;
                     if (insurLogs.length==0 || logtime>insurLogs[insurLogs.length-1].time) {
                         uint count = 0;
                         len = _inLogs.length;
+                        //查找入金账本上，两小时内入金的用户数
                         for(uint i=len-1; i>=0; i++) {
                             uint diff = logtime - _inLogs[len-1].time;
                             if (diff>0 && diff<7200) count++;
                         }
+                        //记录保险账本，可分金额，人数，时间
                         insurLogs.push(Insurance({
-                            time: logtime,
-                            amount: totalUsdtBalance() * 50 / 1000,
-                            count:count
+                            time: logtime,//记账时间
+                            amount: totalUsdtBalance() * 50 / 1000,//合约中剩余Usdt数量的5%
+                            count:count //人数
                         }));    
                     }
                 }
+                //再次记录当前状态
                 _totalLogs.push(FundLog({
                     time:roundedtime,
                     balance:balance,
@@ -496,6 +551,8 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
                 }));
             }
         }
+
+        //在入金总表中记录 当前入金
         _inLogs.push(FundLog({
             time: time,
             tier: 0,
@@ -503,11 +560,14 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
             change: 0
         }));
     }
+    //计算合约中剩余USDT数目
     function totalUsdtBalance() public view returns(uint) {
         return IHRC20(USDTToken).balanceOf(address(this));
     }
+    //出金方法
     function _withdrawal(address sender, uint time) internal returns(uint) {
         uint withdrawable = 0;
+        //管理员提现，不扣任何手续费，然后系统记录总账 管理员不能作为用户 参与游戏）
         if (sender==_admin.account) {
             withdrawable = _admin.rewards + dynamicRewardOf(sender);
             _admin.rewards = 0;
@@ -517,7 +577,9 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
                 balance: 0,
                 change: -(int)(withdrawable)
             }));
-        } else if (sender==_zhang.account) {
+        } 
+        //张总提现，只扣张的奖金部分，然后系统记录总账（注意，张总地址不能作为用户 参与游戏）
+        else if (sender==_zhang.account) {
             withdrawable = _zhang.rewards;
             _zhang.rewards = 0;
             _zhang.logs.push(FundLog({
@@ -526,7 +588,9 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
                 balance: 0,
                 change: -(int)(withdrawable)
             }));
-        } else if (sender==_lee.account) {
+        } 
+        //李总提现，只扣李的奖金部分，然后系统记录总账（注意，李总地址不能作为用户 参与游戏）
+        else if (sender==_lee.account) {
             withdrawable = _lee.rewards;
             _lee.rewards = 0;
             _lee.logs.push(FundLog({
@@ -535,20 +599,27 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
                 balance: 0,
                 change: -(int)(withdrawable)
             }));
-        } else {
+        } 
+        //会员提现
+        else {
             Node storage node = _nodes[sender];
             if (node.balance>0) {
                 (bool overFlowed,uint staticRewards,uint dynamicRewards,uint rewards) = allRewardOf(sender);
                 require(!overFlowed, "# Overflowed");
                 uint _benefit = staticRewards + dynamicRewards;
-                if (node.layer<5) {
+                //计算实际得到金额
+                if (node.layer<5) { //股东
+                    //股东获得 85% + 股东收益 正确
                     withdrawable = _benefit * 850 / 1000 + rewards;
-                } else if (node.layer>998) {
+                } else if (node.layer>998) { //位置奖金用户
+                    //998层用户 实际到账 = （动态收益+静态收益+位置奖金)*50%+（动态收益+静态收益+位置奖金)*50%*70%
                     withdrawable = (_benefit + rewards) * 850 / 1000;
                 } else {
+                    //共生节点和其他用户 实际到账 = （动态收益+静态收益)*50%+（动态收益+静态收益)*50%*70%
                     withdrawable = _benefit * 850 / 1000;
                 }
                 
+                //计算方式 正确
                 uint half = (_benefit + rewards) / 2;
                 if (node.balance > half) {
                     node.balance -= half;
@@ -564,41 +635,53 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
                     node.balance = 0;
                     node.limit = 0;
                 }
-                // Symmetrische Positionsbelohnung
+                // Symmetrische Positionsbelohnung 对称位置奖金  (动态收益+静态收益)*50%*30%*50%
                 if (node.layer<999) {
                     uint pos = _benefit * 75 / 1000; 
-                    address posAddr = _prism[1999];
+                    address posAddr = _prism[1999]; //对称位置 计算错误
+                    //该位置没有用户时候，应该记录奖金累计数。 有用户时候，应该将该奖金加到用户rewards
                     if (posAddr!=address(0)) {
                         Node storage posNode = _nodes[sender];    
                         posNode.rewards += pos;
                     }
-                    // Belohnung für jede Position 999-1000-1001 (insgesamt 2998 Personen)
+                    // Belohnung für jede Position 999-1000-1001 (insgesamt 2998 Personen) 999-1000-1001层 2998 个位置 
                     _luckyLogs.push(FundLog({
                         time:time,
                         balance:pos,
                         change:0,
                         tier:0
                     }));
-                } else {
+                } 
+                //其他情况，记录回购资金
+                else {
                     redeemAmount += _benefit * 150 / 1000;
                 }
             }
         }
         return withdrawable;
     }
+
+    //计算可提现金额
     function _withdrawable(address sender, uint time) internal view returns(uint) {
         uint withdrawable = 0;
         uint _benefit = 0;
+        //计算管理员可提现
         if (sender==_admin.account) {
             _benefit = _admin.rewards + dynamicRewardOf(sender);
             withdrawable = _benefit;
-        } else if (sender==_zhang.account) {
+        } 
+        //计算张总可提现金额
+        else if (sender==_zhang.account) {
             _benefit = _zhang.rewards;
             withdrawable = _benefit;
-        } else if (sender==_lee.account) {
+        } 
+        //计算李总可提现
+        else if (sender==_lee.account) {
             _benefit = _lee.rewards;
             withdrawable = _benefit;
-        } else {
+        } 
+        //计算其他会员可提现 动态+静态+奖金（位置奖金 或者 股东奖励）
+        else {
             Node storage node = _nodes[sender];
             if (node.balance>0) {
                 (bool overFlowed,uint staticRewards,uint dynamicRewards,uint rewards) = allRewardOf(sender);
@@ -616,11 +699,12 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         return withdrawable;
     }
     
+    //计算 TLB 流动供应量 (这里需要扣除 他们自己mint的20%量)
     function circulatingTLB() public view returns(uint) {
         return totalSupply() - totalBurnt;
     }
 
-
+    //计算子节点
     function _branchMembers(address account,uint count) internal view returns(address[20] memory) {
         address[20] memory _children;
         Node storage node = _nodes[account];
@@ -634,18 +718,21 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         }
         return _children;
     }
+
+    //计算静态收益，通过检查该用户 账本方式计算。24小时发放一次静态收益
     function _staticRewardOf(address addr, uint from,uint to) internal view returns(uint) {
         uint result = 0;
         Node storage node = _nodes[addr];
         uint len = node.logs.length;
+        //从后往前计算（检查用户账本，每天本金）
         for(uint i=len; i>0; i++) {
             FundLog storage _log1 = node.logs[i-1];
-            uint _from = _log1.time;
+            uint _from = _log1.time;//前一天的记账时间
             uint _to = 0; 
-            if (i==len) {
+            if (i==len) {//如果是账本最后一天记录，则设置to为当前时间
                 _to = now;
             } else {
-                _to = node.logs[i].time;
+                _to = node.logs[i].time;//后一天的记账时间
             }
             if (from>_to || to<_from) continue;
             if (_from < from) _from = from;
@@ -661,11 +748,12 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         return result;
     }
     
+    //人工触发 ，internal 方法，应该怎么调用？
     function _setInsurance(bool flag) internal returns(bool) {
         _insuranceStatus = flag;
         return _insuranceStatus;
     }
-    
+    //是否保险触发？
     function _isTriggeredInsurance() internal view returns(bool) {
         if (_insuranceStatus) return true;
         uint len = _totalLogs.length;
@@ -676,14 +764,17 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         }
         return false;
     }
+    //推荐人
     function refererOf(address sender) public view returns(address) {
         return _nodes[sender].referer;
     }
+    //是否爆仓
     function isOverflowed(address sender) public view returns(bool) {
         Node storage node = _nodes[sender];
         if (node.isOverflowed) return true;
         bool overflowed = _isTriggeredInsurance();
         if (overflowed) {
+            //通过保险方式 触发爆仓
             if (node.logs.length>0) {
                 /* uint time = _totalLogs[_totalLogs.length-1].time; */
                 FundLog storage nodelog = node.logs[node.logs.length-1];
@@ -694,14 +785,18 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         }
         return overflowed;
     }
+
+
+    //计算股东收益 或者 位置奖金 或者 保险奖金
     function rewardOf(address sender) public view returns(uint) {
         Node storage node = _nodes[sender];
         uint rewards = node.rewards;
-        FundLog[] storage logs = node.logs;
+        FundLog[] storage logs = node.logs; //用户的账本
         uint _from = 0;
         uint _fromIndex = 0;
         uint len = logs.length;
         if (len>0) {
+            //从后往前tranverse用户账本
             for(uint i=len-1; i>0; i--) {
                 FundLog storage _log1 = logs[i-1];
                 if (_log1.change<0) {
@@ -734,9 +829,12 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         }
         return rewards;
     }
+
+    //获取静态收益
     function staticRewardOf(address sender) public view returns(uint) {
         return _staticRewardOf(sender,0,0);
     }
+    //获取动态收益
     function dynamicRewardOf(address sender) public view returns(uint) {
         if (firstAddress==address(0)) return 0;
         uint dynamicRewards = 0;
@@ -834,6 +932,8 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         }
         return dynamicRewards;
     }
+
+    //计算会员所有可提现金额 （计算正确）
     function allRewardOf(address sender) public view returns(bool,uint,uint,uint) {
         Node storage node = _nodes[sender];
         if (node.tier>0 && node.balance>0) {
@@ -1009,19 +1109,26 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         updateNodeInDeposit(sender, referalLink, amount, now);
         _processSellOrder();
     }
+
+    //提现方法 管理员 出金也需要TLB 管理员购买矿机，可以不要钱
     function withdraw() public {
         address sender = _msgSender();
         require(sender!=address(0), "# Invalid_sender");
+        //计算当时间，会员可提金额
         uint withdrawal = _withdrawal(sender, now);
         
+        //如果可提金额大于0
         if (withdrawal>0) {
+            //计算需要燃烧的TLB数量
             uint _needTps = _neededTPSForWithdraw(sender);
             TransferHelper.safeTransfer(USDTToken, sender, withdrawal);
             if (_needTps>0) {
+                //燃烧用户钱包中的TLB
                 _burn(sender, _needTps);
+                //统计 总计燃烧数额
                 totalBurnt += _needTps;
             }
-            
+            //统计张总，李总，管理员，其他会员总出金 （管理员 出金也需要TLB）
             if (sender==_zhang.account) {
                 _zhang.totalRewards += withdrawal;
                 
