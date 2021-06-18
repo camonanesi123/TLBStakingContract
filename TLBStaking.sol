@@ -612,10 +612,10 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
                     //股东获得 85% + 股东收益 正确
                     withdrawable = _benefit * 850 / 1000 + rewards;
                 } else if (node.layer>998) { //位置奖金用户
-                    //998层用户 实际到账 = （动态收益+静态收益+位置奖金)*50%+（动态收益+静态收益+位置奖金)*50%*70%
+                    //998层用户 实际到账 = （动态收益+静态收益+位置奖金)*50%+（动态收益+静态收益+位置奖金)*50%*70% 正确
                     withdrawable = (_benefit + rewards) * 850 / 1000;
                 } else {
-                    //共生节点和其他用户 实际到账 = （动态收益+静态收益)*50%+（动态收益+静态收益)*50%*70%
+                    //共生节点和其他用户 实际到账 = （动态收益+静态收益)*50%+（动态收益+静态收益)*50%*70% 正确
                     withdrawable = _benefit * 850 / 1000;
                 }
                 
@@ -661,26 +661,26 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         return withdrawable;
     }
 
-    //计算可提现金额
+    //计算可提现金额 正确
     function _withdrawable(address sender, uint time) internal view returns(uint) {
         uint withdrawable = 0;
         uint _benefit = 0;
-        //计算管理员可提现
+        //计算管理员可提现 正确
         if (sender==_admin.account) {
             _benefit = _admin.rewards + dynamicRewardOf(sender);
             withdrawable = _benefit;
         } 
-        //计算张总可提现金额
+        //计算张总可提现金额 正确
         else if (sender==_zhang.account) {
             _benefit = _zhang.rewards;
             withdrawable = _benefit;
         } 
-        //计算李总可提现
+        //计算李总可提现 正确
         else if (sender==_lee.account) {
             _benefit = _lee.rewards;
             withdrawable = _benefit;
         } 
-        //计算其他会员可提现 动态+静态+奖金（位置奖金 或者 股东奖励）
+        //计算其他会员可提现 动态+静态+奖金（位置奖金 或者 股东奖励）正确
         else {
             Node storage node = _nodes[sender];
             if (node.balance>0) {
@@ -699,7 +699,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         return withdrawable;
     }
     
-    //计算 TLB 流动供应量 (这里需要扣除 他们自己mint的20%量)
+    //计算 TLB 流动供应量 
     function circulatingTLB() public view returns(uint) {
         return totalSupply() - totalBurnt;
     }
