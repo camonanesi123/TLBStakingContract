@@ -1025,12 +1025,12 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         return minePool.totalPower;
     }
     
-    //计算 推广矿工数量
+    //计算 推广矿工数量 正确
     function referedMinersOf(address account) public view returns(uint) {
         return _referedMiners[account].length;
     }
     
-    //计算 推广矿工的总算力
+    //计算 推广矿工的总算力 正确
     function totalReferedMinerPowerOf(address account) public view returns(uint) {
         uint _total = 0;
         for (uint i=0; i<_referedMiners[account].length; i++) {
@@ -1074,23 +1074,29 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
     function _addMiner(address sender, address referalLink, uint amountUsdt, MineType mineType, uint8 tier, uint referalRewards, uint time) internal {
         Miner storage miner= _miners[sender];
         
+        //如果推荐人不为空 （ 网页连接 不包含 推广码）
         if (miner.referer!=address(0)) {
             if (miner.tier!=0) {
+                //以前购买过，必须使用推荐人连接购买
                 require(miner.referer == referalLink, "Invalid_ReferalLink");
             }
+            //记录推荐人
             _referedMiners[referalLink].push(sender);
             miner.referer = referalLink;
         }
+        //如果没有购买过
         if (miner.tier==0) {
-            miner.mineType = mineType;
-            miner.tier = tier;
-            miner.lastBlock = 0;
-            minePool.minerCount++;
-            _minerlist.push(sender);
+            miner.mineType = mineType;//挖矿种类
+            miner.tier = tier;//算力大小
+            miner.lastBlock = 0;//还不开始挖矿
+            minePool.minerCount++;//矿工数+1
+            _minerlist.push(sender);//矿工对了+1
         } else {
+            //矿工后续购买，该矿工算力增加
             miner.tier += tier;
             
         }
+        //矿池算力增加
         minePool.totalPower += tier;
         
         //正确  张总，李总，管理员，分红
@@ -1196,15 +1202,15 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         require(miner.referer!=address(0), "# Invalid_miner");
         miner.mineType = mineType;
     }
-    //购买矿机（如果没有推广连接，那么推广连接地址 设置成管理员地址）
+    //购买矿机 
     function buyMiner(address referalLink, uint amountUsdt, MineType mineType) public returns(uint) {
         address sender = _msgSender();
         require(sender!=address(0), "# Invalid_sender");
-        (uint8 tier, uint referalRewardRate) = minerTierInfo(amountUsdt);
+        (uint8 tier, uint referalRewardRate) = minerTierInfo(amountUsdt); //返回 算力，推荐人奖金比率
         require(tier>0, "# Invalid_amount");
         uint referalRewards = amountUsdt * referalRewardRate / 1000;
         TransferHelper.safeTransferFrom(USDTToken, sender, address(this), amountUsdt - referalRewards + referalRewards * 10 / 100);
-        TransferHelper.safeTransferFrom(USDTToken, sender, referalLink, referalRewards * 90 / 100);
+        TransferHelper.safeTransferFrom(USDTToken, sender, referalLink, referalRewards * 90 / 100); //若没有推荐人，这里金额转给谁？
         _addMiner(sender, referalLink, amountUsdt, mineType, tier, referalRewards, now);
     }
     //查看矿池，总算力，和总人数 正确
