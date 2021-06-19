@@ -174,11 +174,11 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
     
     //动态收益列表
     uint8[][] sprigs = [
-        [1, 1, 200], //第1层 吃 静态收益的20%
-        [2, 2, 150],//第2层 吃 静态收益的15%
-        [3, 7, 100],//第3-7层 吃 静态收益的10%
-        [8, 15, 50],//第8-15层 吃 静态收益的5%
-        [16, 20, 20]//第15-20层 吃 静态收益的2%
+        [1, 1, 200], // 吃 第1层 静态收益的20%
+        [2, 2, 150],// 吃 第2层 静态收益的15%
+        [3, 7, 100],// 吃 第3-7层 静态收益的10%
+        [8, 15, 50],// 吃 第8-15层 静态收益的5%
+        [16, 20, 20]// 吃 第15-20层 静态收益的2%
     ];
     
     //第一个地址
@@ -719,7 +719,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         return _children;
     }
 
-    //计算静态收益，通过检查该用户 账本方式计算。24小时发放一次静态收益
+    //计算静态收益，通过检查该用户 账本方式计算。24小时发放一次静态收益  方法正确 参数 from：开始时间 参数 to:结束时间 
     function _staticRewardOf(address addr, uint from,uint to) internal view returns(uint) {
         uint result = 0;
         Node storage node = _nodes[addr];
@@ -743,7 +743,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
             if (_diff>864000) {
                 result = SafeMath.add(result, _log1.balance * _tiers[_log1.tier-1].staticRewards * _diff / 86400000);
             }
-            // if lastlog is withdrawal
+            // if lastlog is withdrawal 如果发现上一次是提现。则停止计算
             if (_log1.change<0) break;
         }
         return result;
@@ -846,10 +846,10 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
             return _zhang.rewards;
         } else if (sender==_lee.account) {//李总的动态收益就是李总的rewards
             return _lee.rewards;
-        } else if (sender==_admin.account) {//管理员的动态收益，按最大账户处理
+        } else if (sender==_admin.account) {//管理员的动态收益，按最高等级会员处理
             uint len = _admin.logs.length;
             // calculate PNode static rewards; 计算共生节点静态收益带给管理员的动态收益
-            for(uint i=(len==0?len-1:1); i>0; i--) { //计算管理员从上一次提现到当前时间
+            for(uint i=(len==0?len-1:1); i>0; i--) { //最多两次计算（因为管理员只可以提现）
                 uint _from = 0;
                 uint _to = 0;
                 uint _sprigs = 0;//动态矩阵下标
@@ -857,31 +857,34 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
                 if (len==0) {//管理员从来没有提现过
                     _from = 0;
                     _to = now;
-                    _sprigs = _tiers[3].sprigs;
+                    _sprigs = _tiers[3].sprigs; //最高等级，吃20代
                     _change = 0;
                 } else {
-                    FundLog storage _log1 = _admin.logs[i-1];
-                    _from = _log1.time;
-                    _to = i==len ? now : _admin.logs[i].time;
+                    FundLog storage _log1 = _admin.logs[i-1];//管理员tier永远3
+                    _from = _log1.time; //管理员上上次提现时间
+                    _to = i==len ? now : _admin.logs[i].time;//管理员上次提现时间
                     _sprigs = _tiers[_log1.tier-1].sprigs;
                     _change = _log1.change;
                 }
                 
-                //检查管理员每个记账时间段内，共生节点的静态收益
+                //检查管理员上次提现时间_from到本次提现时间_to的区间内，共生节点的静态收益
                 uint childStatic = _staticRewardOf(firstAddress, _from, _to);
-                dynamicRewards += childStatic * sprigs[0][2] / 1000; //吃20%
+                dynamicRewards += childStatic * sprigs[0][2] / 1000; //吃共生节点 静态收益的 20%
                 if (_change<0) break;
             }
-            Node storage node = _nodes[firstAddress];//共生节点
+            Node storage node = _nodes[firstAddress];//管理员第一个 孩子 共生节点
             for (uint b=0; b<node.branches.length; b++) {
+                //计算共生节点 每一个孩子（股东） 动态收益
                 dynamicRewards += _dynamicRewardOf(node.branches[b].child, sender, 4, 1);
             }
-        } else if (sender==firstAddress) {
+        } 
+        else if (sender==firstAddress) {//共生节点动态收益 = 股东动态收益
             Node storage node = _nodes[sender];
             for (uint b=0; b<node.branches.length; b++) {
                 dynamicRewards += _dynamicRewardOf(node.branches[b].child, sender, 0, 0);
             }
-        } else {
+        } 
+        else {//股东 和 一般会员 动态收益计算方式
             Node storage node = _nodes[sender];
             uint countBranch = node.referalCount / 3;
             if (countBranch>0) {
@@ -894,7 +897,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         return dynamicRewards;
     }
 
-    //动态收益计算方式
+    //动态收益计算方式 
     function _dynamicRewardOf(address firstChild, address sender, uint8 tier,uint tierStart) public view returns(uint) {
         address[20] memory _children = _branchMembers(firstChild,20-tierStart);
         uint dynamicRewards = 0;
@@ -923,7 +926,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
                 _sprigs = _tiers[_log1.tier-1].sprigs;
                 _change = _log1.change;
             }
-            
+            //从会员等级开始 向下计算
             for(uint j=tierStart; j<=_sprigs; j++) {
                 for(uint k=sprigs[j][0]; k<=sprigs[j][1]; k++) {
                     if (_children[k-1]!=address(0)) {
@@ -939,7 +942,7 @@ contract TLBStaking is HRC20("TLB Staking", "TLB", 4, 48000 * 365 * 2 * (10 ** 4
         return dynamicRewards;
     }
 
-    //计算会员所有可提现金额 （计算正确）
+    //计算会员所有可提现金额 （计算逻辑正确）
     function allRewardOf(address sender) public view returns(bool,uint,uint,uint) {
         Node storage node = _nodes[sender];
         if (node.tier>0 && node.balance>0) {
